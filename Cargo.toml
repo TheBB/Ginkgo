@@ -1,0 +1,17 @@
+[package]
+name = "ginkgo"
+version = "0.1.0"
+authors = ["Eivind Fonn <evfonn@gmail.com>"]
+edition = "2018"
+
+[lib]
+name = "ginkgo"
+path = "src/lib.rs"
+
+[[bin]]
+name = "ginkgo"
+path = "src/bin/ginkgo.rs"
+
+[dependencies]
+gc = { version = "0.3", features = ["derive"] }
+broom = "0.3.0"
