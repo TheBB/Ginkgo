@@ -1,6 +1,6 @@
 use std::fmt;
 
-use broom::{Heap, Handle};
+use broom::{Heap, Handle, Rooted};
 use broom::prelude::{Trace, Tracer};
 
 
@@ -15,17 +15,18 @@ pub enum SVal {
 }
 
 /// Heap-based (garbage-collected) Ginkgo value.
-#[derive(Clone, Copy, PartialEq)]
+#[derive(Clone, PartialEq)]
 pub enum HVal {
     Cons(Object, Object)
 }
 
 /// Safe Ginkgo object.  Either a direct representation of a stack
 /// value or a GC-handle to a heap value.
-#[derive(Clone, Copy, PartialEq)]
+#[derive(Clone)]
 pub enum Object {
     S(SVal),
     H(Handle<HVal>),
+    R(Rooted<HVal>),
 }
 
 /// Reference-ified Ginkgo object.  Like Object, except wraps a
@@ -57,6 +58,24 @@ impl AsRef<Self> for Object {
     #[inline]
     fn as_ref(&self) -> &Object {
         self
+    }
+}
+
+impl PartialEq for Object {
+    fn eq(&self, other: &Self) -> bool {
+        match self {
+            Object::S(l) => if let Object::S(r) = other { l == r} else { false },
+            Object::H(l) => match other {
+                Object::H(r) => l == r,
+                Object::R(r) => *l == r.handle(),
+                _ => false,
+            }
+            Object::R(l) => match other {
+                Object::H(r) => l.handle() == *r,
+                Object::R(r) => l.handle() == r.handle(),
+                _ => false,
+            }
+        }
     }
 }
 
@@ -92,7 +111,7 @@ pub struct WrappedObject<'a> {
 
 impl fmt::Display for WrappedObject<'_> {
     fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
-        match self.vm.direct(self.object) {
+        match self.vm.direct(&self.object) {
             DirectObject::D(ptr) => write!(f, "#dead<{:?}>", ptr),
             DirectObject::S(SVal::Undefined) => write!(f, "#undefined"),
             DirectObject::S(SVal::Nil) => write!(f, "nil"),
@@ -100,16 +119,16 @@ impl fmt::Display for WrappedObject<'_> {
             DirectObject::S(SVal::Bool(false)) => write!(f, "#f"),
             DirectObject::S(SVal::Int(v)) => write!(f, "{}", v),
             DirectObject::S(SVal::Float(v)) => write!(f, "{}", v),
-            DirectObject::H(&HVal::Cons(car, cdr)) => {
+            DirectObject::H(HVal::Cons(car, cdr)) => {
                 write!(f, "({}", self.vm.wrap(car))?;
 
-                let mut tail = cdr;
-                while let DirectObject::H(&HVal::Cons(car, cdr)) = self.vm.direct(tail) {
+                let mut tail: &Object = cdr;
+                while let DirectObject::H(HVal::Cons(car, cdr)) = self.vm.direct(tail) {
                     write!(f, " {}", self.vm.wrap(car))?;
                     tail = cdr;
                 }
 
-                if tail == Object::Nil {
+                if *tail == Object::Nil {
                     write!(f, ")")
                 } else {
                     write!(f, " . {})", self.vm.wrap(tail))
@@ -141,6 +160,14 @@ impl VM {
         self.heap.len()
     }
 
+    /// Allow a value to be taken off the VM stack and still be kept alive.
+    pub fn rooted(&mut self, obj: &Object) -> Object {
+        match obj {
+            Object::H(handle) => Object::R(self.heap.make_rooted(handle)),
+            _ => obj.clone(),
+        }
+    }
+
     /// Create and return a new integer (fixnum) object.
     pub fn int(&self, v: isize) -> Object {
         Object::S(SVal::Int(v))
@@ -158,22 +185,25 @@ impl VM {
     }
 
     /// Create a combined short-lived VM-object.
-    pub fn wrap<V: AsRef<Object>>(&self, obj: V) -> WrappedObject {
-        WrappedObject { vm: self, object: *obj.as_ref() }
+    pub fn wrap(&self, obj: &Object) -> WrappedObject {
+        WrappedObject { vm: self, object: obj.clone() }
     }
 
     /// Destructure a Ginkgo object into an object that lives fully on the stack.
-    pub fn direct<V: AsRef<Object>>(&self, obj: V) -> DirectObject {
+    pub fn direct(&self, obj: &Object) -> DirectObject {
         match obj.as_ref() {
-            Object::S(v) => DirectObject::S(*v),
+            &Object::S(v) => DirectObject::S(v),
             Object::H(handle) => match self.heap.get(handle) {
                 Some(h) => DirectObject::H(h),
                 _ => DirectObject::D(unsafe { handle.get_unchecked() }),
             }
+            Object::R(handle) => match self.heap.get(handle) {
+                Some(h) => DirectObject::H(h),
+                _ => DirectObject::D(unsafe { handle.handle().get_unchecked() }),
+            }
         }
     }
 }
-
 
 
 #[cfg(test)]
@@ -196,6 +226,24 @@ mod tests {
 
     #[test]
     fn count_rooted() {
-
+        let mut vm = VM::new();
+        let a = vm.cons(Object::True, Object::Nil);
+        assert_eq!(1, vm.heapsize());
+        let b = vm.cons(Object::False, a.clone());
+        assert_eq!(2, vm.heapsize());
+        let c = vm.rooted(&b);
+        assert_eq!(2, vm.heapsize());
+        vm.gc();
+        assert_eq!(2, vm.heapsize());
+        drop(c);
+        assert_eq!(2, vm.heapsize());
+        let d = vm.rooted(&a);
+        assert_eq!(2, vm.heapsize());
+        vm.gc();
+        assert_eq!(1, vm.heapsize());
+        drop(d);
+        assert_eq!(1, vm.heapsize());
+        vm.gc();
+        assert_eq!(0, vm.heapsize());
     }
 }
