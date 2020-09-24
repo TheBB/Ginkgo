@@ -54,13 +54,6 @@ impl Trace<HVal> for HVal {
     }
 }
 
-impl AsRef<Self> for Object {
-    #[inline]
-    fn as_ref(&self) -> &Object {
-        self
-    }
-}
-
 impl PartialEq for Object {
     fn eq(&self, other: &Self) -> bool {
         match self {
@@ -191,7 +184,7 @@ impl VM {
 
     /// Destructure a Ginkgo object into an object that lives fully on the stack.
     pub fn direct(&self, obj: &Object) -> DirectObject {
-        match obj.as_ref() {
+        match obj {
             &Object::S(v) => DirectObject::S(v),
             Object::H(handle) => match self.heap.get(handle) {
                 Some(h) => DirectObject::H(h),
