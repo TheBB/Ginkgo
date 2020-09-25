@@ -114,7 +114,13 @@ impl fmt::Display for WrappedObject<'_> {
             DirectObject::S(SVal::Bool(true)) => write!(f, "#t"),
             DirectObject::S(SVal::Bool(false)) => write!(f, "#f"),
             DirectObject::S(SVal::Int(v)) => write!(f, "{}", v),
-            DirectObject::S(SVal::Float(v)) => write!(f, "{}", v),
+            DirectObject::S(SVal::Float(v)) => {
+                let s = format!("{}", v);
+                match s.find('.') {
+                    Some(_) => write!(f, "{}", s),
+                    None => write!(f, "{}.0", s),
+                }
+            }
             DirectObject::H(HVal::Cons(car, cdr)) => {
                 write!(f, "({}", self.vm.wrap(car))?;
 
