@@ -104,38 +104,35 @@ impl Trace<HVal> for HVal {
     }
 }
 
-// impl PartialEq for Object {
-//     fn eq(&self, other: &Self) -> bool {
-//         match self {
-//             Object::S(l) => if let Object::S(r) = other { l == r} else { false },
-//             Object::H(l) => match other {
-//                 Object::H(r) => l == r,
-//                 Object::R(r) => *l == r.handle(),
-//                 _ => false,
-//             }
-//             Object::R(l) => match other {
-//                 Object::H(r) => l.handle() == *r,
-//                 Object::R(r) => l.handle() == r.handle(),
-//                 _ => false,
-//             }
-//         }
-//     }
-// }
+impl PartialEq for RootedObject {
+    fn eq(&self, other: &Self) -> bool {
+        match (self, other) {
+            (RootedObject::S(l), RootedObject::S(r)) => l == r,
+            (RootedObject::R(l), RootedObject::R(r)) => l.handle() == r.handle(),
+            _ => false,
+        }
+    }
+}
 
-// impl<'a> PartialEq for DirectObject<'a> {
-//     fn eq(&self, other: &Self) -> bool {
-//         match self {
-//             DirectObject::D(l) => if let DirectObject::D(r) = other { l == r } else { false },
-//             DirectObject::S(l) => if let DirectObject::S(r) = other { l == r } else { false },
-//             DirectObject::H(l) =>
-//                 if let DirectObject::H(r) = other {
-//                     *l as *const HVal == *r as *const HVal
-//                 } else {
-//                     false
-//                 }
-//         }
-//     }
-// }
+impl PartialEq<RootedObject> for Object {
+    fn eq(&self, other: &RootedObject) -> bool {
+        match (self, other) {
+            (Object::S(l), RootedObject::S(r)) => l == r,
+            (Object::H(l), RootedObject::R(r)) => *l == r.handle(),
+            _ => false,
+        }
+    }
+}
+
+impl PartialEq<Object> for RootedObject {
+    fn eq(&self, other: &Object) -> bool {
+        match (self, other) {
+            (RootedObject::S(l), Object::S(r)) => l == r,
+            (RootedObject::R(l), Object::H(r)) => l.handle() == *r,
+            _ => false,
+        }
+    }
+}
 
 #[allow(non_upper_case_globals)]
 impl Object {
