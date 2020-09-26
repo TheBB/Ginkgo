@@ -21,13 +21,13 @@ fn count_rooted() {
     assert_eq!(1, vm.heapsize());
     let b = vm.cons(Object::False, a.clone());
     assert_eq!(2, vm.heapsize());
-    let c = vm.rooted(b);
+    let c = b.root(&mut vm);
     assert_eq!(2, vm.heapsize());
     vm.gc();
     assert_eq!(2, vm.heapsize());
     drop(c);
     assert_eq!(2, vm.heapsize());
-    let d = vm.rooted(a);
+    let d = a.root(&mut vm);
     assert_eq!(2, vm.heapsize());
     vm.gc();
     assert_eq!(1, vm.heapsize());

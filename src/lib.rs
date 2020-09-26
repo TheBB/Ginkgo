@@ -50,21 +50,31 @@ pub enum DirectObject<'a> {
 }
 
 pub trait GObj {
-    fn as_obj(&self) -> Object;
+    fn unroot(&self) -> Object;
+    fn root(self, vm: &mut VM) -> RootedObject;
 }
 
 impl GObj for Object {
-    fn as_obj(&self) -> Object {
+    fn unroot(&self) -> Object {
         *self
+    }
+    fn root(self, vm: &mut VM) -> RootedObject {
+        match self {
+            Object::S(v) => RootedObject::S(v),
+            Object::H(h) => RootedObject::R(vm.heap.make_rooted(h)),
+        }
     }
 }
 
 impl GObj for RootedObject {
-    fn as_obj(&self) -> Object {
+    fn unroot(&self) -> Object {
         match self {
             RootedObject::S(v) => Object::S(*v),
             RootedObject::R(h) => Object::H(h.handle()),
         }
+    }
+    fn root(self, _: &mut VM) -> RootedObject {
+        self
     }
 }
 
@@ -205,14 +215,6 @@ impl VM {
         self.heap.len()
     }
 
-    /// Allow a value to be taken off the VM stack and still be kept alive.
-    pub fn rooted(&mut self, obj: Object) -> RootedObject {
-        match obj {
-            Object::S(v) => RootedObject::S(v),
-            Object::H(h) => RootedObject::R(self.heap.make_rooted(h)),
-        }
-    }
-
     /// Create and return a new integer (fixnum) object.
     pub fn int(&self, v: isize) -> Object {
         Object::S(SVal::Int(v))
@@ -224,8 +226,8 @@ impl VM {
     }
 
     /// Create and return a new unrooted cons cell.
-    pub fn cons(&mut self, car: Object, cdr: Object) -> Object {
-        let handle = self.heap.insert_temp(HVal::Cons(car, cdr));
+    pub fn cons(&mut self, car: impl GObj, cdr: impl GObj) -> Object {
+        let handle = self.heap.insert_temp(HVal::Cons(car.unroot(), cdr.unroot()));
         Object::H(handle)
     }
 
@@ -238,13 +240,13 @@ impl VM {
     }
 
     /// Create a combined short-lived VM-object.
-    pub fn wrap(&self, obj: Object) -> WrappedObject {
-        WrappedObject { vm: self, object: obj }
+    pub fn wrap(&self, obj: impl GObj) -> WrappedObject {
+        WrappedObject { vm: self, object: obj.unroot() }
     }
 
     /// Destructure a Ginkgo object into an object that lives fully on the stack.
-    pub fn direct(&self, obj: Object) -> DirectObject {
-        match obj {
+    pub fn direct(&self, obj: impl GObj) -> DirectObject {
+        match obj.unroot() {
             Object::S(v) => DirectObject::S(v),
             Object::H(handle) => match self.heap.get(handle) {
                 Some(h) => DirectObject::H(h),
