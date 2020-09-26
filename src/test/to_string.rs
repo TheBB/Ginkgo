@@ -49,3 +49,11 @@ fn conses() {
     let d = vm.cons(vm.int(2), c);
     assert_eq!("(2 1 . 0)", format!("{}", vm.wrap(&d)));
 }
+
+#[test]
+fn vectors() {
+    let mut vm = VM::new();
+
+    let v = vm.vec(3);
+    assert_eq!("#(#undefined #undefined #undefined)", format!("{}", vm.wrap(&v)));
+}

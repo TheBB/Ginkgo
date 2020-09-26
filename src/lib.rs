@@ -20,7 +20,8 @@ pub enum SVal {
 /// Heap-based (garbage-collected) Ginkgo value.
 #[derive(Clone, PartialEq)]
 pub enum HVal {
-    Cons(Object, Object)
+    Cons(Object, Object),
+    Vec(Vec<Object>),
 }
 
 /// Safe Ginkgo object.  Either a direct representation of a stack
@@ -51,9 +52,15 @@ impl Trace<HVal> for Object {
 
 impl Trace<HVal> for HVal {
     fn trace(&self, tracer: &mut Tracer<HVal>) {
-        let HVal::Cons(car, cdr) = self;
-        car.trace(tracer);
-        cdr.trace(tracer);
+        match self {
+            HVal::Cons(car, cdr) => {
+                car.trace(tracer);
+                cdr.trace(tracer);
+            },
+            HVal::Vec(vec) => for obj in vec {
+                obj.trace(tracer);
+            }
+        }
     }
 }
 
@@ -136,6 +143,16 @@ impl fmt::Display for WrappedObject<'_> {
                     write!(f, " . {})", self.vm.wrap(tail))
                 }
             }
+            DirectObject::H(HVal::Vec(vec)) => {
+                write!(f, "#(")?;
+                if vec.len() > 0 {
+                    write!(f, "{}", self.vm.wrap(&vec[0]))?;
+                }
+                for obj in &vec[1..] {
+                    write!(f, " {}", self.vm.wrap(obj))?;
+                }
+                write!(f, ")")
+            }
         }
     }
 }
@@ -183,6 +200,14 @@ impl VM {
     /// Create and return a new unrooted cons cell.
     pub fn cons(&mut self, car: Object, cdr: Object) -> Object {
         let handle = self.heap.insert_temp(HVal::Cons(car, cdr));
+        Object::H(handle)
+    }
+
+    /// Create and return a new unrooted vector with initial length,
+    /// initialized with undefined objects.
+    pub fn vec(&mut self, len: usize) -> Object {
+        let vec = vec![Object::Undef; len];
+        let handle = self.heap.insert_temp(HVal::Vec(vec));
         Object::H(handle)
     }
 
