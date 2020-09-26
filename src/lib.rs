@@ -55,9 +55,11 @@ pub trait GObj {
 }
 
 impl GObj for Object {
+    #[inline]
     fn unroot(&self) -> Object {
         *self
     }
+
     fn root(self, vm: &mut VM) -> RootedObject {
         match self {
             Object::S(v) => RootedObject::S(v),
@@ -67,12 +69,14 @@ impl GObj for Object {
 }
 
 impl GObj for RootedObject {
+    #[inline]
     fn unroot(&self) -> Object {
         match self {
             RootedObject::S(v) => Object::S(*v),
             RootedObject::R(h) => Object::H(h.handle()),
         }
     }
+
     fn root(self, _: &mut VM) -> RootedObject {
         self
     }
@@ -216,16 +220,19 @@ impl VM {
     }
 
     /// Create and return a new integer (fixnum) object.
+    #[inline]
     pub fn int(&self, v: isize) -> Object {
         Object::S(SVal::Int(v))
     }
 
     /// Create and return a new floating point object.
+    #[inline]
     pub fn float(&self, v: f64) -> Object {
         Object::S(SVal::Float(v))
     }
 
     /// Create and return a new unrooted cons cell.
+    #[inline]
     pub fn cons(&mut self, car: impl GObj, cdr: impl GObj) -> Object {
         let handle = self.heap.insert_temp(HVal::Cons(car.unroot(), cdr.unroot()));
         Object::H(handle)
@@ -240,11 +247,13 @@ impl VM {
     }
 
     /// Create a combined short-lived VM-object.
+    #[inline]
     pub fn wrap(&self, obj: impl GObj) -> WrappedObject {
         WrappedObject { vm: self, object: obj.unroot() }
     }
 
     /// Destructure a Ginkgo object into an object that lives fully on the stack.
+    #[inline]
     pub fn direct(&self, obj: impl GObj) -> DirectObject {
         match obj.unroot() {
             Object::S(v) => DirectObject::S(v),
