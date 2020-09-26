@@ -37,7 +37,7 @@ pub enum Object {
 #[derive(Clone)]
 pub enum RootedObject {
     S(SVal),
-    R(Rooted<HVal>),
+    H(Rooted<HVal>),
 }
 
 /// Reference-ified Ginkgo object.  Like Object, except wraps a
@@ -63,7 +63,7 @@ impl GObj for Object {
     fn root(self, vm: &mut VM) -> RootedObject {
         match self {
             Object::S(v) => RootedObject::S(v),
-            Object::H(h) => RootedObject::R(vm.heap.make_rooted(h)),
+            Object::H(h) => RootedObject::H(vm.heap.make_rooted(h)),
         }
     }
 }
@@ -73,7 +73,7 @@ impl GObj for RootedObject {
     fn unroot(&self) -> Object {
         match self {
             RootedObject::S(v) => Object::S(*v),
-            RootedObject::R(h) => Object::H(h.handle()),
+            RootedObject::H(h) => Object::H(h.handle()),
         }
     }
 
@@ -108,7 +108,7 @@ impl PartialEq for RootedObject {
     fn eq(&self, other: &Self) -> bool {
         match (self, other) {
             (RootedObject::S(l), RootedObject::S(r)) => l == r,
-            (RootedObject::R(l), RootedObject::R(r)) => l.handle() == r.handle(),
+            (RootedObject::H(l), RootedObject::H(r)) => l.handle() == r.handle(),
             _ => false,
         }
     }
@@ -118,7 +118,7 @@ impl PartialEq<RootedObject> for Object {
     fn eq(&self, other: &RootedObject) -> bool {
         match (self, other) {
             (Object::S(l), RootedObject::S(r)) => l == r,
-            (Object::H(l), RootedObject::R(r)) => *l == r.handle(),
+            (Object::H(l), RootedObject::H(r)) => *l == r.handle(),
             _ => false,
         }
     }
@@ -128,7 +128,7 @@ impl PartialEq<Object> for RootedObject {
     fn eq(&self, other: &Object) -> bool {
         match (self, other) {
             (RootedObject::S(l), Object::S(r)) => l == r,
-            (RootedObject::R(l), Object::H(r)) => l.handle() == *r,
+            (RootedObject::H(l), Object::H(r)) => l.handle() == *r,
             _ => false,
         }
     }
