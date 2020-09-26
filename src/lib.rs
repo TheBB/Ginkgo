@@ -26,20 +26,46 @@ pub enum HVal {
 
 /// Safe Ginkgo object.  Either a direct representation of a stack
 /// value or a GC-handle to a heap value.
-#[derive(Clone)]
+#[derive(Clone, Copy, PartialEq)]
 pub enum Object {
     S(SVal),
     H(Handle<HVal>),
+}
+
+/// Safe rooted Ginkgo object.  Exactly like Object, except may live
+/// on the Rust stack without problems.
+#[derive(Clone)]
+pub enum RootedObject {
+    S(SVal),
     R(Rooted<HVal>),
 }
 
 /// Reference-ified Ginkgo object.  Like Object, except wraps a
-/// reference to a heap value instead of a GC-handle.  May not survive
-/// a GC!
+/// reference to a heap value instead of a GC-handle.  May potentially
+/// not survive a GC!
 pub enum DirectObject<'a> {
     D(*const HVal),
     S(SVal),
     H(&'a HVal),
+}
+
+pub trait GObj {
+    fn as_obj(&self) -> Object;
+}
+
+impl GObj for Object {
+    fn as_obj(&self) -> Object {
+        *self
+    }
+}
+
+impl GObj for RootedObject {
+    fn as_obj(&self) -> Object {
+        match self {
+            RootedObject::S(v) => Object::S(*v),
+            RootedObject::R(h) => Object::H(h.handle()),
+        }
+    }
 }
 
 impl Trace<HVal> for Object {
@@ -64,38 +90,38 @@ impl Trace<HVal> for HVal {
     }
 }
 
-impl PartialEq for Object {
-    fn eq(&self, other: &Self) -> bool {
-        match self {
-            Object::S(l) => if let Object::S(r) = other { l == r} else { false },
-            Object::H(l) => match other {
-                Object::H(r) => l == r,
-                Object::R(r) => *l == r.handle(),
-                _ => false,
-            }
-            Object::R(l) => match other {
-                Object::H(r) => l.handle() == *r,
-                Object::R(r) => l.handle() == r.handle(),
-                _ => false,
-            }
-        }
-    }
-}
+// impl PartialEq for Object {
+//     fn eq(&self, other: &Self) -> bool {
+//         match self {
+//             Object::S(l) => if let Object::S(r) = other { l == r} else { false },
+//             Object::H(l) => match other {
+//                 Object::H(r) => l == r,
+//                 Object::R(r) => *l == r.handle(),
+//                 _ => false,
+//             }
+//             Object::R(l) => match other {
+//                 Object::H(r) => l.handle() == *r,
+//                 Object::R(r) => l.handle() == r.handle(),
+//                 _ => false,
+//             }
+//         }
+//     }
+// }
 
-impl<'a> PartialEq for DirectObject<'a> {
-    fn eq(&self, other: &Self) -> bool {
-        match self {
-            DirectObject::D(l) => if let DirectObject::D(r) = other { l == r } else { false },
-            DirectObject::S(l) => if let DirectObject::S(r) = other { l == r } else { false },
-            DirectObject::H(l) =>
-                if let DirectObject::H(r) = other {
-                    *l as *const HVal == *r as *const HVal
-                } else {
-                    false
-                }
-        }
-    }
-}
+// impl<'a> PartialEq for DirectObject<'a> {
+//     fn eq(&self, other: &Self) -> bool {
+//         match self {
+//             DirectObject::D(l) => if let DirectObject::D(r) = other { l == r } else { false },
+//             DirectObject::S(l) => if let DirectObject::S(r) = other { l == r } else { false },
+//             DirectObject::H(l) =>
+//                 if let DirectObject::H(r) = other {
+//                     *l as *const HVal == *r as *const HVal
+//                 } else {
+//                     false
+//                 }
+//         }
+//     }
+// }
 
 #[allow(non_upper_case_globals)]
 impl Object {
@@ -114,7 +140,7 @@ pub struct WrappedObject<'a> {
 
 impl fmt::Display for WrappedObject<'_> {
     fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
-        match self.vm.direct(&self.object) {
+        match self.vm.direct(self.object) {
             DirectObject::D(ptr) => write!(f, "#dead<{:?}>", ptr),
             DirectObject::S(SVal::Undefined) => write!(f, "#undefined"),
             DirectObject::S(SVal::Nil) => write!(f, "nil"),
@@ -128,16 +154,16 @@ impl fmt::Display for WrappedObject<'_> {
                     None => write!(f, "{}.0", s),
                 }
             }
-            DirectObject::H(HVal::Cons(car, cdr)) => {
+            DirectObject::H(&HVal::Cons(car, cdr)) => {
                 write!(f, "({}", self.vm.wrap(car))?;
 
-                let mut tail: &Object = cdr;
-                while let DirectObject::H(HVal::Cons(car, cdr)) = self.vm.direct(tail) {
+                let mut tail: Object = cdr;
+                while let DirectObject::H(&HVal::Cons(car, cdr)) = self.vm.direct(tail) {
                     write!(f, " {}", self.vm.wrap(car))?;
                     tail = cdr;
                 }
 
-                if *tail == Object::Nil {
+                if tail == Object::Nil {
                     write!(f, ")")
                 } else {
                     write!(f, " . {})", self.vm.wrap(tail))
@@ -146,10 +172,10 @@ impl fmt::Display for WrappedObject<'_> {
             DirectObject::H(HVal::Vec(vec)) => {
                 write!(f, "#(")?;
                 if vec.len() > 0 {
-                    write!(f, "{}", self.vm.wrap(&vec[0]))?;
+                    write!(f, "{}", self.vm.wrap(vec[0]))?;
                 }
                 for obj in &vec[1..] {
-                    write!(f, " {}", self.vm.wrap(obj))?;
+                    write!(f, " {}", self.vm.wrap(*obj))?;
                 }
                 write!(f, ")")
             }
@@ -180,10 +206,10 @@ impl VM {
     }
 
     /// Allow a value to be taken off the VM stack and still be kept alive.
-    pub fn rooted(&mut self, obj: &Object) -> Object {
+    pub fn rooted(&mut self, obj: Object) -> RootedObject {
         match obj {
-            Object::H(handle) => Object::R(self.heap.make_rooted(handle)),
-            _ => obj.clone(),
+            Object::S(v) => RootedObject::S(v),
+            Object::H(h) => RootedObject::R(self.heap.make_rooted(h)),
         }
     }
 
@@ -212,21 +238,17 @@ impl VM {
     }
 
     /// Create a combined short-lived VM-object.
-    pub fn wrap(&self, obj: &Object) -> WrappedObject {
-        WrappedObject { vm: self, object: obj.clone() }
+    pub fn wrap(&self, obj: Object) -> WrappedObject {
+        WrappedObject { vm: self, object: obj }
     }
 
     /// Destructure a Ginkgo object into an object that lives fully on the stack.
-    pub fn direct(&self, obj: &Object) -> DirectObject {
+    pub fn direct(&self, obj: Object) -> DirectObject {
         match obj {
-            &Object::S(v) => DirectObject::S(v),
+            Object::S(v) => DirectObject::S(v),
             Object::H(handle) => match self.heap.get(handle) {
                 Some(h) => DirectObject::H(h),
                 _ => DirectObject::D(unsafe { handle.get_unchecked() }),
-            }
-            Object::R(handle) => match self.heap.get(handle) {
-                Some(h) => DirectObject::H(h),
-                _ => DirectObject::D(unsafe { handle.handle().get_unchecked() }),
             }
         }
     }
