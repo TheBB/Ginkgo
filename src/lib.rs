@@ -8,7 +8,7 @@ mod test;
 
 
 /// Stack-based Ginkgo value.
-#[derive(Clone, Copy, PartialEq)]
+#[derive(Clone, Copy, Debug, PartialEq)]
 pub enum SVal {
     Undefined,
     Nil,
@@ -18,7 +18,7 @@ pub enum SVal {
 }
 
 /// Heap-based (garbage-collected) Ginkgo value.
-#[derive(Clone, PartialEq)]
+#[derive(Clone, Debug, PartialEq)]
 pub enum HVal {
     Cons(Object, Object),
     Vec(Vec<Object>),
@@ -26,7 +26,7 @@ pub enum HVal {
 
 /// Safe Ginkgo object.  Either a direct representation of a stack
 /// value or a GC-handle to a heap value.
-#[derive(Clone, Copy, PartialEq)]
+#[derive(Clone, Copy, Debug, PartialEq)]
 pub enum Object {
     S(SVal),
     H(Handle<HVal>),
@@ -34,7 +34,7 @@ pub enum Object {
 
 /// Safe rooted Ginkgo object.  Exactly like Object, except may live
 /// on the Rust stack without problems.
-#[derive(Clone)]
+#[derive(Clone, Debug)]
 pub enum RootedObject {
     S(SVal),
     H(Rooted<HVal>),
@@ -43,15 +43,40 @@ pub enum RootedObject {
 /// Reference-ified Ginkgo object.  Like Object, except wraps a
 /// reference to a heap value instead of a GC-handle.  May potentially
 /// not survive a GC!
-pub enum DirectObject<'a> {
+enum DObj<M> {
     D(*const HVal),
     S(SVal),
-    H(&'a HVal),
+    H(M),
 }
+
+type DirectObject<'a> = DObj<&'a HVal>;
+type DirectObjectMut<'a> = DObj<&'a mut HVal>;
 
 pub trait GObj {
     fn unroot(&self) -> Object;
     fn root(self, vm: &mut VM) -> RootedObject;
+    fn as_sval(&self) -> Option<SVal>;
+
+    fn as_int(&self) -> Option<isize> {
+        match self.as_sval()? {
+            SVal::Int(v) => Some(v),
+            _ => None,
+        }
+    }
+
+    fn as_float(&self) -> Option<f64> {
+        match self.as_sval()? {
+            SVal::Float(v) => Some(v),
+            _ => None,
+        }
+    }
+
+    fn as_bool(&self) -> Option<bool> {
+        match self.as_sval()? {
+            SVal::Bool(v) => Some(v),
+            _ => None,
+        }
+    }
 }
 
 impl GObj for Object {
@@ -64,6 +89,13 @@ impl GObj for Object {
         match self {
             Object::S(v) => RootedObject::S(v),
             Object::H(h) => RootedObject::H(vm.heap.make_rooted(h)),
+        }
+    }
+
+    fn as_sval(&self) -> Option<SVal> {
+        match self {
+            &Object::S(v) => Some(v),
+            _ => None,
         }
     }
 }
@@ -79,6 +111,13 @@ impl GObj for RootedObject {
 
     fn root(self, _: &mut VM) -> RootedObject {
         self
+    }
+
+    fn as_sval(&self) -> Option<SVal> {
+        match self {
+            &RootedObject::S(v) => Some(v),
+            _ => None,
+        }
     }
 }
 
@@ -152,20 +191,20 @@ pub struct WrappedObject<'a> {
 impl fmt::Display for WrappedObject<'_> {
     fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
         match self.vm.direct(self.object) {
-            DirectObject::D(ptr) => write!(f, "#dead<{:?}>", ptr),
-            DirectObject::S(SVal::Undefined) => write!(f, "#undefined"),
-            DirectObject::S(SVal::Nil) => write!(f, "nil"),
-            DirectObject::S(SVal::Bool(true)) => write!(f, "#t"),
-            DirectObject::S(SVal::Bool(false)) => write!(f, "#f"),
-            DirectObject::S(SVal::Int(v)) => write!(f, "{}", v),
-            DirectObject::S(SVal::Float(v)) => {
+            DObj::D(ptr) => write!(f, "#dead<{:?}>", ptr),
+            DObj::S(SVal::Undefined) => write!(f, "#undefined"),
+            DObj::S(SVal::Nil) => write!(f, "nil"),
+            DObj::S(SVal::Bool(true)) => write!(f, "#t"),
+            DObj::S(SVal::Bool(false)) => write!(f, "#f"),
+            DObj::S(SVal::Int(v)) => write!(f, "{}", v),
+            DObj::S(SVal::Float(v)) => {
                 let s = format!("{}", v);
                 match s.find('.') {
                     Some(_) => write!(f, "{}", s),
                     None => write!(f, "{}.0", s),
                 }
             }
-            DirectObject::H(&HVal::Cons(car, cdr)) => {
+            DObj::H(&HVal::Cons(car, cdr)) => {
                 write!(f, "({}", self.vm.wrap(car))?;
 
                 let mut tail: Object = cdr;
@@ -180,7 +219,7 @@ impl fmt::Display for WrappedObject<'_> {
                     write!(f, " . {})", self.vm.wrap(tail))
                 }
             }
-            DirectObject::H(HVal::Vec(vec)) => {
+            DObj::H(HVal::Vec(vec)) => {
                 write!(f, "#(")?;
                 if vec.len() > 0 {
                     write!(f, "{}", self.vm.wrap(vec[0]))?;
@@ -235,12 +274,53 @@ impl VM {
         Object::H(handle)
     }
 
+    /// Get the car of a cons cell.
+    #[inline]
+    pub fn car(&self, obj: impl GObj) -> Option<Object> {
+        match self.direct(obj) {
+            DObj::H(&HVal::Cons(car, _)) => Some(car),
+            _ => None,
+        }
+    }
+
+    /// Get the cdr of a cons cell.
+    #[inline]
+    pub fn cdr(&self, obj: impl GObj) -> Option<Object> {
+        match self.direct(obj) {
+            DObj::H(&HVal::Cons(_, cdr)) => Some(cdr),
+            _ => None
+        }
+    }
+
     /// Create and return a new unrooted vector with initial length,
     /// initialized with undefined objects.
     pub fn vec(&mut self, len: usize) -> Object {
         let vec = vec![Object::Undef; len];
         let handle = self.heap.insert_temp(HVal::Vec(vec));
         Object::H(handle)
+    }
+
+    /// Get the n'th element of a vector.
+    pub fn vec_get(&self, obj: impl GObj, index: usize) -> Option<Object> {
+        match self.direct(obj) {
+            DObj::H(HVal::Vec(vec)) => vec.get(index).copied(),
+            _ => None,
+        }
+    }
+
+    /// Set the n'th element of a vector.
+    pub fn vec_set(&mut self, obj: impl GObj, index: usize, val: impl GObj) -> Result<(), ()> {
+        match self.direct_mut(obj) {
+            DObj::H(HVal::Vec(vec)) => {
+                if index < vec.len() {
+                    vec[index] = val.unroot();
+                    Ok(())
+                } else {
+                    Err(())
+                }
+            },
+            _ => Err(()),
+        }
     }
 
     /// Create a combined short-lived VM-object.
@@ -251,12 +331,24 @@ impl VM {
 
     /// Destructure a Ginkgo object into an object that lives fully on the stack.
     #[inline]
-    pub fn direct(&self, obj: impl GObj) -> DirectObject {
+    fn direct(&self, obj: impl GObj) -> DirectObject {
         match obj.unroot() {
-            Object::S(v) => DirectObject::S(v),
+            Object::S(v) => DObj::S(v),
             Object::H(handle) => match self.heap.get(handle) {
-                Some(h) => DirectObject::H(h),
-                _ => DirectObject::D(unsafe { handle.get_unchecked() }),
+                Some(h) => DObj::H(h),
+                _ => DObj::D(unsafe { handle.get_unchecked() }),
+            }
+        }
+    }
+
+    /// Destructure a Ginkgo object into a mutable object that lives fully on the stack.
+    #[inline]
+    fn direct_mut(&mut self, obj: impl GObj) -> DirectObjectMut {
+        match obj.unroot() {
+            Object::S(v) => DObj::S(v),
+            Object::H(handle) => match self.heap.get_mut(handle) {
+                Some(h) => DObj::H(h),
+                _ => DObj::D(unsafe { handle.get_unchecked() }),
             }
         }
     }
