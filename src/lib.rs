@@ -6,6 +6,8 @@ use broom::prelude::{Trace, Tracer};
 #[cfg(test)]
 mod test;
 
+mod string;
+
 
 /// Stack-based Ginkgo value.
 #[derive(Clone, Copy, Debug, PartialEq)]
@@ -22,6 +24,7 @@ pub enum SVal {
 pub enum HVal {
     Cons(Object, Object),
     Vec(Vec<Object>),
+    String(String),
 }
 
 /// Safe Ginkgo object.  Either a direct representation of a stack
@@ -139,6 +142,7 @@ impl Trace<HVal> for HVal {
             HVal::Vec(vec) => for obj in vec {
                 obj.trace(tracer);
             }
+            _ => (),
         }
     }
 }
@@ -229,6 +233,7 @@ impl fmt::Display for WrappedObject<'_> {
                 }
                 write!(f, ")")
             }
+            DObj::H(HVal::String(s)) => write!(f, "\"{}\"", string::escape(s))
         }
     }
 }
@@ -321,6 +326,12 @@ impl VM {
             },
             _ => Err(()),
         }
+    }
+
+    /// Create and return a new string.
+    pub fn string(&mut self, s: String) -> Object {
+        let handle = self.heap.insert_temp(HVal::String(s));
+        Object::H(handle)
     }
 
     /// Create a combined short-lived VM-object.
